@@ -16,8 +16,10 @@ volatile int count = 0;           // Счетчик импульсов обор�
 volatile int state = 0;           // Переменная хранящая статус вращения
 volatile int pinAValue = 0;       // Переменные хранящие состояние пина импульсов энкодера
 volatile int pinBValue = 0;
+volatile int speed;
 int **pressure_data; // Данные эксперимента
 byte num_rep;        // Количество итераций эксперимента
+volatile unsigned long start_t, end_t;
 
 void establishContact()
 {
@@ -40,9 +42,9 @@ void establishContact()
 void A() // Прерывание по фазе A
 {
   int pressure;
-  pinAValue = digitalRead(ENCODER_A); // Получаем состояние пинов A и B
+  pinAValue = digitalRead(ENCODER_A); // Получение состояние пинов A и B
   pinBValue = digitalRead(ENCODER_B);
-  cli(); // Запрещаем обработку прерываний
+  cli(); // Запрет обработки прерываний
   if (!pinAValue && pinBValue)
     state = 1; // Если при спаде линии А на линии B лог. единица, то вращение в одну сторону
   if (!pinAValue && !pinBValue)
@@ -60,7 +62,7 @@ void A() // Прерывание по фазе A
     pressure = analogRead(PRESSURE_SENSOR);
     pressure_data[num_revolutions - START][count] = pressure;
   }
-  sei(); // Разрешаем обработку прерываний
+  sei(); // Разрешение обработки прерываний
 }
 
 void Z() // Прерывание по фазе Z
@@ -70,6 +72,7 @@ void Z() // Прерывание по фазе Z
   num_revolutions++;
   if (num_revolutions == START)
     start_flag = true;
+  start_t = millis();
   if (start_flag == true) // Чтение и сохранение давления в нулевой точке текущего оборота
   {
     pressure = analogRead(PRESSURE_SENSOR);
@@ -78,9 +81,11 @@ void Z() // Прерывание по фазе Z
 
   if (num_revolutions == START + num_rep) // Окончание эксперимента
   {
-    start_flag = false;
-    digitalWrite(ENABLE, LOW);
+    end_t = millis();
+    digitalWrite(ENABLE, LOW); // Остановка двигателя компрессора
     analogWrite(MOTOR, 0);
+    speed = (num_rep * 60000) / (end_t - start_t);
+    start_flag = false;
     send_flag = true;
   }
 }
@@ -104,10 +109,13 @@ void send_data() // Отправка данных эксперимента
     for (int j = 0; j < N; j++)
     {
       ptr = (char *)&pressure_data[i][j];
-      Serial.write(*ptr++); //Отправляем младший байт
-      Serial.write(*ptr++); //Отправляем старший байт
+      Serial.write(*ptr++); // Отправка младшего байта давления
+      Serial.write(*ptr++); // Отправка старшего байта давления
     }
   }
+  ptr = (char *)&speed;
+  Serial.write(*ptr++); // Отправка младшего байта скорости
+  Serial.write(*ptr++); // Отправка старшего байта скорости
 }
 
 void delete_data()
@@ -120,8 +128,8 @@ void delete_data()
 void setup()
 {
   pinMode(PRESSURE_SENSOR, INPUT);
-  ADCSRA |= (1 << ADPS2); //Биту ADPS2 присваиваем единицу - коэффициент деления 16
-  ADCSRA &= ~((1 << ADPS1) | (1 << ADPS0)); //Битам ADPS1 и ADPS0 присваиваем нули
+  ADCSRA |= (1 << ADPS2);                   // Присвоение единицы биту ADPS2  - коэффициент деления 16
+  ADCSRA &= ~((1 << ADPS1) | (1 << ADPS0)); // Присвоение нулей битам ADPS1 и ADPS0
   pinMode(ENCODER_A, INPUT);
   pinMode(ENCODER_B, INPUT);
   pinMode(ENCODER_Z, INPUT);
@@ -158,7 +166,7 @@ void loop()
       for (int i = 0; i < num_rep; i++)
         pressure_data[i] = new int[N];
       init_data_array();
-      digitalWrite(ENABLE, HIGH);
+      digitalWrite(ENABLE, HIGH); // Запуск двигателя компрессора
       analogWrite(MOTOR, motor_value);
     }
   }
@@ -168,6 +176,7 @@ void loop()
     delete_data();
     num_revolutions = 0;
     count = 0;
+    speed = 0;
     send_flag = false;
   }
 }
